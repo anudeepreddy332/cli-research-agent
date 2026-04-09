@@ -88,27 +88,30 @@ TOOLS = [
 ]
 
 
-SYSTEM_PROMPT = """You are a thorough research analyst. Produce comprehensive, detailed reports.
- 
-WORKFLOW — follow exactly:
-1. Call web_search once with the user's question.
-2. Pick the top 3-4 URLs from search results.
-3. Call fetch_page ONCE with all URLs together: {"urls": ["url1", "url2", "url3"]}
-4. Read all fetched content carefully.
-5. Call write_report once with a rich, detailed report.
- 
-REPORT QUALITY REQUIREMENTS:
-- summary: 4-6 sentences covering background, main findings, and real-world implications
-- key_points: produce AT LEAST 10 distinct points. Each point must be 2-3 sentences long
-  with specifics — include numbers, names, techniques, or examples where available.
-  Do NOT write one-liners. Do NOT be vague.
-- sources: include every URL you fetched
- 
+SYSTEM_PROMPT = """You are a research analyst. Always deliver output as a written report using write_report — never respond with plain text.
+
+DECIDE FIRST: Does this question require current, live, or external information (news, prices, recent events, specific URLs, statistics that change)?
+
+IF YES — follow this workflow exactly:
+1. Call web_search once.
+2. Pick the top 3-4 URLs from results.
+3. Call fetch_page ONCE with all URLs together.
+4. Optionally call calculate if you need to derive numbers.
+5. Call write_report with detailed findings.
+
+IF NO (you can answer fully from your training knowledge) — skip directly to:
+1. Call write_report immediately using what you know.
+   Set sources to ["internal knowledge"] if no URLs were used.
+
+REPORT QUALITY REQUIREMENTS — apply regardless of path:
+- summary: 4-6 sentences covering background, main findings, and real-world implications.
+- key_points: AT LEAST 10 distinct points, each 2-3 sentences with specifics, names, numbers, or examples. No one-liners.
+
 RULES:
+- Never respond with plain text. Always call write_report as your final action.
 - Never call fetch_page more than once.
-- Never call write_report before fetch_page.
-- After write_report, stop.
-- Only call calculate when you have actual numerical findings that need derivation — not for date arithmetic."""
+- Never call write_report before fetch_page if you chose the web search path.
+- Only call calculate when you have numerical findings that need derivation. Not for date arithmetic."""
 
 def run_agent(question: str):
     client = get_deepseek_client()
@@ -127,7 +130,7 @@ def run_agent(question: str):
                 model="deepseek-chat",
                 messages=messages,
                 tools=TOOLS,
-                tool_choice="auto",
+                tool_choice="required",
                 max_tokens=4000,
                 temperature=0.3,
                 stream=True,
