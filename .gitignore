@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual env
+.venv/
+env/
+venv/
+.env
+
+
+# IDE
+.idea/
+
+# Logs & outputs
+reports/
+*.log
+tests/benchmark_results.json
+
+# OS
+.DS_Store
+
+# Testing
+.pytest_cache/
