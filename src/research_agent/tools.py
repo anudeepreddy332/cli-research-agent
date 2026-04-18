@@ -1,6 +1,4 @@
 import os
-from idlelib.debugger_r import restart_subprocess_debugger
-
 import httpx
 from pathlib import Path
 from bs4 import BeautifulSoup
