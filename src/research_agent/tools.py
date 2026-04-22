@@ -141,3 +141,82 @@ def execute_tool(tool_name: str, arguments: dict) -> str:
 
 
     return f"Error: Unknown tool '{tool_name}'"
+
+
+# ADD — tool schemas for LangGraph (same content as TOOLS in main.py):
+TOOL_SCHEMAS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": "Search the web for current information. Use when you need up-to-date or external knowledge.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "The search query"}
+                },
+                "required": ["query"]
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "fetch_page",
+            "description": "Fetch the full content of webpages given their URLs. Use after web_search to read pages.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "urls": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of URLs to fetch",
+                    }
+                },
+                "required": ["urls"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "calculate",
+            "description": "Evaluate a math expression safely. Use when you need to compute percentages, ratios, or derive numbers.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "expression": {
+                        "type": "string",
+                        "description": "A math expression, e.g. '294000 / 1000000'",
+                    }
+                },
+                "required": ["expression"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_report",
+            "description": "Write the final research report to a markdown file. Call this once you have enough information.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "summary": {"type": "string", "description": "2-3 sentence overview"},
+                    "key_points": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of key findings",
+                    },
+                    "sources": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of URLs used",
+                    },
+                },
+                "required": ["title", "summary", "key_points", "sources"],
+            },
+        },
+    },
+]
