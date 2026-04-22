@@ -10,97 +10,21 @@ Nodes:
     - tool_executor: Executes any tool calls in the last assistant message.
 """
 import json
-import time
+import os
 from typing import Literal, Any
 from typing_extensions import TypedDict
-from src.research_agent.config_langgraph import DEEPSEEK_API_KEY, DEEPSEEK_MODEL, DEEPSEEK_BASE_URL, \
-    COST_PER_1M_INPUT_TOKENS, COST_PER_1M_OUTPUT_TOKENS
+from src.research_agent.config import (DEEPSEEK_MODEL, DEEPSEEK_BASE_URL,
+                                       COST_PER_1M_INPUT, COST_PER_1M_OUTPUT,
+                                       MAX_ITERATIONS, MAX_COST_PER_RUN)
 from langchain_openai import ChatOpenAI
 from src.research_agent.tools import execute_tool
 from langgraph.graph import StateGraph, START, END
-from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
+from src.research_agent.tools import TOOL_SCHEMAS
+from dotenv import load_dotenv
+load_dotenv()
 
-TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "web_search",
-            "description": "Search the web for current information."
-                           "Use when you need up-to-date or external knowledge.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "The search query"}
-                },
-                "required": ["query"]
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "fetch_page",
-            "description": "Fetch the full content of webpages given their URLs."
-                           "Use after web_search to read pages.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "urls": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "List of URLs to fetch",
-                    }
-                },
-                "required": ["urls"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "calculate",
-            "description": "Evaluate a math expression safely."
-                           "Use when you need to compute percentages, ratios, or derive numbers from research findings.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "expression": {
-                        "type": "string",
-                        "description": "A math expression, e.g. '294000 / 1000000' or '41 / 100 * 54'",
-                    }
-                },
-                "required": ["expression"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "write_report",
-            "description": "Write the final research report to a markdown file."
-                           "Call this once you have enough information.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string"},
-                    "summary": {"type": "string", "description": "2-3 sentence overview"},
-                    "key_points": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "List of key findings",
-                    },
-                    "sources": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "List of URLs used",
-                    },
-                },
-                "required": ["title", "summary", "key_points", "sources"],
-            },
-        },
-    },
-]
+TOOLS = TOOL_SCHEMAS
 
 
 SYSTEM_PROMPT = """You are a research analyst. Always deliver output as a written report using write_report — never respond with plain text.
@@ -151,7 +75,7 @@ def _make_client() -> ChatOpenAI:
     """
     return ChatOpenAI(
         model=DEEPSEEK_MODEL,
-        api_key=DEEPSEEK_API_KEY,
+        api_key=os.getenv("DEEPSEEK_API_KEY"),
         base_url=DEEPSEEK_BASE_URL,
         temperature=0.3,
         max_tokens=4000,
@@ -159,13 +83,19 @@ def _make_client() -> ChatOpenAI:
 
 # Helper: track cost and tokens from LLM response
 def _track_cost(state: AgentState, response: Any) -> dict:
+    """
+    Extract token usage from LangChain response and compute accumulated cost.
+    Returns dict with new running totals to merge into state.
+    LangGraph state merge is additive by replacement (not addition) —
+    the returned values must be the new totals, not deltas.
+    """
     usage = response.usage_metadata
     input_tokens = usage.get("input_tokens", 0)
     output_tokens = usage.get("output_tokens", 0)
-    cost = (input_tokens / 1e6 * COST_PER_1M_INPUT_TOKENS) + (output_tokens / 1e6 * COST_PER_1M_OUTPUT_TOKENS)
+    cost = (input_tokens / 1e6 * COST_PER_1M_INPUT) + (output_tokens / 1e6 * COST_PER_1M_OUTPUT)
     return {
-        "total_cost_usd": state["total_cost_usd"] + cost
-        "total_tokens": state["total_tokens"] + input_tokens + output_tokens
+        "total_cost_usd": state["total_cost_usd"] + cost,
+        "total_tokens": state["total_tokens"] + input_tokens + output_tokens,
     }
 
 # Node 1: call_model
@@ -210,20 +140,134 @@ def node_call_model(state: AgentState) -> dict:
         for t in TOOLS
     ]
 
-    response = client.invoke(lc_messages, tools=lc_tools, tool_choice="auto")
+    client_with_tools = client.bind_tools(lc_tools, tool_choice="auto")
+    response = client_with_tools.invoke(lc_messages)
     cost_update = _track_cost(state, response)
 
+    # Build assistant message dict (OpenAI format)
+    assistant_msg = {
+        "role": "assistant",
+        "content": response.content or "",
+    }
+    if response.tool_calls:
+        assistant_msg["tool_calls"] = [
+            {
+                "id": tc["id"],
+                "name": tc["name"],
+                "args": tc["args"],
+            }
+            for tc in response.tool_calls
+        ]
+
+    return {
+        "messages": state["messages"] + [assistant_msg],
+        "iterations": state["iterations"] + 1,
+        **cost_update,
+    }
+
+def node_tool_executor(state: AgentState) -> dict:
+    """
+    Execute tool calls from the last assistant message.
+    Appends tool result messages and updates fetch_called/report_written flags.
+    """
+    last_msg = state["messages"][-1]
+    tool_calls = last_msg.get("tool_calls", [])
+    if not tool_calls:
+        return {}
+
+    new_messages = []
+    fetch_called = state["fetch_called"]
+    report_written = state["report_written"]
+
+    for tc in tool_calls:
+        if "function" in tc:
+            # OpenAI nested format
+            tool_name = tc["function"]["name"]
+            args_str = tc["function"]["arguments"]
+            try:
+                args = json.loads(args_str)
+            except json.JSONDecodeError:
+                args = {}
+
+        else:
+            tool_name = tc["name"]
+            args = tc["args"]
 
 
+        # Enforce fetch_page once
+        if tool_name == "fetch_page" and fetch_called:
+            result = "Skipped: fetch_page already called once."
+
+        else:
+            if tool_name == "fetch_page":
+                fetch_called = True
+            result = execute_tool(tool_name, args)
+            if tool_name == "write_report":
+                report_written = True
+
+        new_messages.append({
+            "role": "tool",
+            "tool_call_id": tc["id"],
+            "content": str(result),
+        })
+
+    return {
+        "messages": state["messages"] + new_messages,
+        "fetch_called": fetch_called,
+        "report_written": report_written,
+        "status": "done" if report_written else "running",
+    }
 
 
+# Conditional edge: should_continue
+
+def should_continue(state: AgentState) -> Literal["tool_executor", "end"]:
+    """
+        Central routing logic. Called after call_model.
+        - If cost exceeded -> end
+        - If max iterations reached -> end
+        - If report written -> end
+        - If last message has tool calls -> tool_executor
+        - Else -> end (no tool calls, assistant gave final answer but didn't call write_report? Actually prompt forces write_report, but guard here)
+    """
+    if state["total_cost_usd"] > MAX_COST_PER_RUN:
+        print(f"[gate] Cost exceeded: ${state['total_cost_usd']:.4f}")
+        return "end"
+
+    if state["iterations"] >= MAX_ITERATIONS:
+        print(f"[gate] Max iterations ({MAX_ITERATIONS}) reached")
+        return "end"
+
+    if state.get("report_written"):
+        print("[gate] Report written, ending")
+        return "end"
+
+    last_msg = state["messages"][-1]
+    if last_msg.get("tool_calls"):
+        return "tool_executor"
+    return "end"
 
 
+# Graph assembly
+def build_graph():
+    """
+    Construct and compile the LangGraph state machine.
+    Returns a runnable graph object.
+    """
+    builder = StateGraph(AgentState)
 
+    builder.add_node("call_model", node_call_model)
+    builder.add_node("tool_executor", node_tool_executor)
 
+    builder.add_edge(START, "call_model")
+    builder.add_conditional_edges(
+        "call_model",
+        should_continue,
+        {
+            "tool_executor": "tool_executor",
+            "end": END,
+        }
+    )
+    builder.add_edge("tool_executor", "call_model")     # Loop back
 
-
-
-
-
-
+    return builder.compile()
