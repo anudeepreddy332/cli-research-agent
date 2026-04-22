@@ -83,3 +83,42 @@ Runs 10 diverse research questions, times each run, and saves results to `tests/
 - Safe expression evaluation using Python's AST parser
 - Prompt engineering for structured, detailed output
 - Benchmarking agent quality across diverse query types
+
+## Two Implementations: Raw Loop vs. LangGraph
+
+This repository contains **two versions** of the same agent, built for learning and comparison:
+
+| Version | Entry Point | Description                                                                                                                                                       |
+|---------|-------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Original (Phase 1)** | `main.py` | Raw `for` loop with explicit message handling. Great for understanding the mechanics of tool calling and agent loops.                                             |
+| **LangGraph Rebuild** | `main_langgraph.py` | Same behavior rebuilt with [LangGraph](https://github.com/langchain-ai/langgraph). Uses an explicit state machine with typed state, nodes, and conditional edges. |
+
+### Why Two Versions?
+
+Rebuilding the same agent with LangGraph teaches how frameworks abstract away the loop while adding:
+
+- **Explicit state management** – All data flowing through the agent is declared in a typed `AgentState`.
+- **Observability** – LangGraph can visualize the graph and inspect state at any node.
+- **Cost tracking** – Every LLM call logs token usage and cost.
+- **Checkpointing** – Built‑in support for pausing and resuming runs.
+
+The LangGraph version is the foundation for more complex agents (Phase 3+).
+
+### Running the LangGraph Version
+
+```bash
+uv run python main_langgraph.py
+```
+
+## Project Structure (LangGraph Additions)
+    cli-research-agent/
+    ├── main.py                      # Original raw-loop agent
+    ├── main_langgraph.py            # LangGraph version entry point
+    ├── src/research_agent/
+    │   ├── config.py                # Shared config (API clients, LangGraph‑specific constants - cost limits, iterations)
+    │   ├── tools.py                 # Shared tool implementations
+    │   ├── graph.py                 # LangGraph state machine definition
+    │   
+    └── ...
+Both versions share the same tools.py and core logic – only the control flow differs.
+
