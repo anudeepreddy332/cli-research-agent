@@ -230,4 +230,61 @@ uv run python main.py
 ```
 
 
-Code reference: main.py, src/research_agent/tools.py  
+Code reference: main.py, src/research_agent/tools.py
+
+## 9. Post‑Phase 1: Rebuilding with LangGraph (Learning Extension)
+
+After completing Phase 2 (RAG + memory), I returned to Phase 1 and rebuilt the same agent using **LangGraph**. This was an intentional learning exercise to understand how agentic frameworks differ from raw loops.
+
+### Why Rebuild the Same Agent?
+
+The original `for` loop worked perfectly, but it had implicit control flow. Adding a new step (e.g., a verification tool) would require nested conditionals and scattered state flags. LangGraph makes the state machine **explicit**:
+
+- Every piece of data is declared in a typed `AgentState`.
+- Every step is a **node** (a pure function).
+- Transitions are defined as **edges** (unconditional) or **conditional edges** (routing functions).
+
+### LangGraph Architecture for the Research Agent
+    START → call_model → should_continue?
+    ├─ tool_executor → call_model (loop)
+    └─ END
+
+
+**Nodes:**
+- `call_model` – Invokes DeepSeek with the current message history and available tools.
+- `tool_executor` – Executes any tool calls requested by the model and appends results.
+
+**Conditional Edge (`should_continue`):**
+- Routes to `tool_executor` if the model requested a tool call.
+- Routes to `END` if the model finished (or cost/iteration limits exceeded).
+
+**State Fields (AgentState):**
+- `messages` – Conversation history (list of dicts).
+- `fetch_called` – Guard to ensure `fetch_page` runs at most once.
+- `report_written` – Flag to terminate after `write_report`.
+- `iterations`, `total_cost_usd`, `total_tokens` – Observability metrics.
+
+### Key Differences Observed
+
+| Aspect | Original Raw Loop | LangGraph Rebuild |
+|--------|-------------------|-------------------|
+| Token streaming | Real‑time visible output. | Not implemented (prints node transitions only). |
+| Cost tracking | Not originally built. | Accumulated and displayed after run. |
+| State inspection | Manual print statements. | Built‑in `get_state()` method. |
+| Extensibility | Adding a step requires modifying loop logic. | Add a node and wire an edge. |
+
+The LangGraph version produces **identical quality reports** but with better observability and a foundation for more complex agents (Phase 3+).
+
+### Running the LangGraph Version
+
+```bash
+uv run python main_langgraph.py
+```
+The workflow is identical to the original. A test question like "What is the capital of France?" will produce a report in the same reports/ directory.
+
+### Lessons from the Rebuild
+- Frameworks add structure. LangGraph forces you to declare your state machine, which reduces bugs as complexity grows.
+
+- Explicit state is easier to debug. You always know exactly what data is flowing.
+
+- Raw loops are perfectly fine for simple agents. The right tool depends on the complexity of the task.
