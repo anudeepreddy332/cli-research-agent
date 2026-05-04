@@ -56,6 +56,16 @@ uv run python tests/benchmark.py
 
 Runs 10 diverse research questions, times each run, and saves results to `tests/benchmark_results.json`.
 
+**Benchmark results (10 queries):**
+
+| Metric | Result |
+|--------|--------|
+| Queries completed | 10/10 |
+| Identified failure mode | Bot-protected pages returning truncated responses (~40 chars) |
+
+> Full results in `tests/benchmark_results.json`.
+
+
 ## Project structure
 
     cli-research-agent/
